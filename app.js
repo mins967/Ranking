@@ -47,6 +47,8 @@
   }
   const db = window.firebase.firestore();
 
+  let currentRecords = [];
+
   function isAdminMode() {
     return sessionStorage.getItem(ADMIN_KEY) === "1";
   }
@@ -61,6 +63,9 @@
     inputs.forEach((el) => {
       el.disabled = !on;
     });
+
+    // 관리자 모드 토글 시에도, 현재 데이터 기준으로 삭제 버튼 노출만 갱신
+    renderFromRecords(currentRecords);
   }
 
   function parseTimeSeconds() {
@@ -94,13 +99,8 @@
     return out;
   }
 
-  async function fetchRecords() {
-    const snap = await db
-      .collection(COLLECTION)
-      .orderBy("timeSeconds", "desc")
-      .get();
-
-    return snap.docs.map((doc) => {
+  function mapRecordsFromDocs(docs) {
+    return docs.map((doc) => {
       const data = doc.data() || {};
       const timeSeconds = Number(data.timeSeconds);
       return {
@@ -157,7 +157,6 @@
         del.textContent = "삭제";
         del.addEventListener("click", async () => {
           await deleteRecord(r.id);
-          await render();
         });
         meta.appendChild(del);
       }
@@ -170,21 +169,11 @@
     });
   }
 
-  async function render() {
+  function renderFromRecords(records) {
     const admin = isAdminMode();
+    const safeRecords = Array.isArray(records) ? records : [];
 
-    let records = [];
-    try {
-      records = await fetchRecords();
-    } catch (err) {
-      console.error(err);
-      emptyState.textContent = "기록을 불러오지 못했습니다. 콘솔을 확인해 주세요.";
-      emptyState.classList.remove("hidden");
-      recordCount.textContent = "0명";
-      return;
-    }
-
-    const ranked = assignRanks(records);
+    const ranked = assignRanks(safeRecords);
     const champions = ranked.filter((x) => x.rank === 1);
     const rest = ranked.filter((x) => x.rank > 1);
 
@@ -223,7 +212,6 @@
         del.textContent = "삭제";
         del.addEventListener("click", async () => {
           await deleteRecord(r.id);
-          await render();
         });
         right.appendChild(del);
       }
@@ -234,7 +222,7 @@
       rankingList.appendChild(li);
     });
 
-    const n = records.length;
+    const n = safeRecords.length;
     recordCount.textContent = `${n}명`;
     emptyState.classList.toggle("hidden", n !== 0);
   }
@@ -259,28 +247,38 @@
     minutesInput.value = "";
     secondsInput.value = "";
     nameInput.focus();
-    await render();
   });
 
   btnClearAll.addEventListener("click", async () => {
     if (!isAdminMode()) return;
     if (!confirm("모든 기록을 삭제할까요?")) return;
     await clearAll();
-    await render();
   });
 
   // F12 콘솔에서 아래 함수 실행 -> 관리자 모드 온/오프
   window.enableAdminMode = async () => {
     setAdminMode(true);
     nameInput.focus();
-    await render();
   };
 
   window.disableAdminMode = async () => {
     setAdminMode(false);
-    await render();
   };
 
   setAdminMode(isAdminMode());
-  render();
+  db.collection(COLLECTION)
+    .orderBy("timeSeconds", "desc")
+    .onSnapshot(
+      (snap) => {
+        currentRecords = mapRecordsFromDocs(snap.docs);
+        renderFromRecords(currentRecords);
+      },
+      (err) => {
+        console.error(err);
+        currentRecords = [];
+        emptyState.textContent =
+          "기록을 불러오지 못했습니다. 권한/규칙을 확인해 주세요.";
+        renderFromRecords(currentRecords);
+      }
+    );
 })();
